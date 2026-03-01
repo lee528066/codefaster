@@ -1,5 +1,6 @@
 package com.coderfaster.agent.config;
 
+import com.coderfaster.agent.config.local.LocalConfig;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -77,17 +78,28 @@ public class AgentConfig {
     private boolean debug = false;
 
     /**
-     * Mock 模式下使用的模型名称
+     * 使用的模型名称
      * 默认使用 qwen3.5-plus
      */
     @Builder.Default
     private String modelName = "qwen3.5-plus";
 
     /**
-     * Mock 模式下的 API 密钥
-     * 如果未设置，则从环境变量 DASHSCOPE_API_KEY 获取
+     * API 密钥
+     * 如果未设置，则从本地配置文件或环境变量获取
      */
     private String apiKey;
+
+    /**
+     * Base URL（用于 Code Plan 等特殊配置）
+     */
+    private String baseUrl;
+
+    /**
+     * 认证类型：NORMAL 或 CODE_PLAN
+     */
+    @Builder.Default
+    private String authType = "NORMAL";
 
     /**
      * Mock 模式下的系统提示词
@@ -125,6 +137,40 @@ public class AgentConfig {
         }
         if (maxConcurrentTools <= 0) {
             throw new IllegalArgumentException("maxConcurrentTools must be positive");
+        }
+    }
+
+    /**
+     * 从本地配置加载 AgentConfig
+     */
+    public static AgentConfig fromLocalConfig() {
+        try {
+            LocalConfig localConfig = LocalConfig.load();
+            return AgentConfig.builder()
+                    .apiKey(localConfig.getApiKey())
+                    .modelName(localConfig.getModelName())
+                    .baseUrl(localConfig.getEffectiveBaseUrl())
+                    .authType(localConfig.getAuthType())
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load local config", e);
+        }
+    }
+
+    /**
+     * 从本地配置加载或创建 AgentConfig（带交互式引导）
+     */
+    public static AgentConfig fromLocalConfigWithInit() {
+        try {
+            LocalConfig localConfig = com.coderfaster.agent.config.local.ConfigInitializer.initialize();
+            return AgentConfig.builder()
+                    .apiKey(localConfig.getApiKey())
+                    .modelName(localConfig.getModelName())
+                    .baseUrl(localConfig.getEffectiveBaseUrl())
+                    .authType(localConfig.getAuthType())
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to initialize config", e);
         }
     }
 }

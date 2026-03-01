@@ -494,4 +494,22 @@ public class AgentRunner implements Closeable {
             return runner;
         }
     }
+
+    /**
+     * 从 AgentConfig 创建 Builder
+     */
+    public static Builder builder(AgentConfig agentConfig) {
+        return new Builder()
+                .uid(agentConfig.getUid())
+                .clientType(agentConfig.getClientType())
+                .clientVersion(agentConfig.getClientVersion())
+                .workingDirectory(agentConfig.getWorkingDirectory())
+                .maxIterations(agentConfig.getMaxIterations())
+                .connectTimeoutSeconds(agentConfig.getConnectTimeoutSeconds())
+                .readTimeoutSeconds(agentConfig.getReadTimeoutSeconds())
+                .writeTimeoutSeconds(agentConfig.getWriteTimeoutSeconds())
+                .autoConfirm(agentConfig.isAutoConfirm())
+                .debug(agentConfig.isDebug())
+                .modelName(agentConfig.getModelName());
+    }
 }

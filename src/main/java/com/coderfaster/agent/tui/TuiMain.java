@@ -1,6 +1,9 @@
 package com.coderfaster.agent.tui;
 
 import com.coderfaster.agent.AgentRunner;
+import com.coderfaster.agent.config.AgentConfig;
+import com.coderfaster.agent.config.local.ConfigInitializer;
+import com.coderfaster.agent.config.local.LocalConfig;
 import com.coderfaster.agent.session.SessionConfig;
 import com.coderfaster.agent.session.SessionMetadata;
 import com.coderfaster.agent.tui.view.MainView;
@@ -15,21 +18,6 @@ import java.util.List;
 
 /**
  * TUI 主入口
- * 使用 TamboUI Toolkit DSL 构建声明式终端 UI
- *
- * 使用方法:
- *   coderfaster [options]
- *
- * 选项:
- *   --working-dir path    工作目录
- *   --model name          模型名称（默认：qwen3.5-plus）
- *   --auto-confirm        自动确认危险操作
- *   --debug               开启调试模式
- *   --max-iterations n    最大迭代次数（默认：50）
- *   --resume [id-prefix]  恢复会话（不带参数则恢复最近会话）
- *   --continue            恢复最近会话（--resume 的简写）
- *   --cleanup-days n      会话保留天数（默认：30，-1 表示永不清理）
- *   --help                显示帮助
  */
 public class TuiMain {
 
@@ -44,17 +32,32 @@ public class TuiMain {
         }
 
         try {
+            // 检查并初始化本地配置
+            System.out.println("正在检查配置...");
+            LocalConfig localConfig = ConfigInitializer.initialize(true);
+            System.out.println("✓ 配置已加载：" + LocalConfig.getConfigPath());
+            System.out.println("  账号类型：" + localConfig.getAuthType());
+            System.out.println("  模型：" + localConfig.getModelName());
+            System.out.println();
+
+            // 使用本地配置创建 AgentConfig
+            AgentConfig agentConfig = AgentConfig.builder()
+                    .apiKey(localConfig.getApiKey())
+                    .modelName(localConfig.getModelName())
+                    .baseUrl(localConfig.getEffectiveBaseUrl())
+                    .authType(localConfig.getAuthType())
+                    .workingDirectory(config.workingDirectory)
+                    .autoConfirm(config.autoConfirm)
+                    .debug(config.debug)
+                    .maxIterations(config.maxIterations)
+                    .build();
+
             SessionConfig sessionConfig = SessionConfig.builder()
                     .cleanupPeriodDays(config.cleanupDays)
                     .cleanupOnStartup(true)
                     .build();
 
-            AgentRunner agentRunner = AgentRunner.builder()
-                    .workingDirectory(config.workingDirectory)
-                    .modelName(config.modelName)
-                    .autoConfirm(config.autoConfirm)
-                    .debug(config.debug)
-                    .maxIterations(config.maxIterations)
+            AgentRunner agentRunner = AgentRunner.builder(agentConfig)
                     .sessionConfig(sessionConfig)
                     .build();
 
@@ -62,7 +65,7 @@ public class TuiMain {
 
             String resumedSessionId = handleSessionResume(agentRunner, controller, config);
 
-            controller.addSystemMessage("Welcome to CodeMate Agent TUI!");
+            controller.addSystemMessage("Welcome to CodeFaster Agent TUI!");
             if (resumedSessionId != null) {
                 controller.addSystemMessage("Resumed session: " + resumedSessionId.substring(0, 8));
             }
@@ -89,9 +92,7 @@ public class TuiMain {
                 agentRunner.setEventHandler(bridge::handleEvent);
                 controller.setQuitCallback(() -> {
                     try {
-                        // 先关闭 controller 资源（包括线程池）
                         controller.close();
-                        // 然后退出渲染循环，让 try-with-resources 自动关闭 runner 和资源
                         runner.quit();
                     } catch (Exception e) {
                         log.error("Error during quit", e);
@@ -115,11 +116,11 @@ public class TuiMain {
             String arg = args[i];
             switch (arg) {
                 case "--server-url":
-                    log.warn("--server-url is deprecated, direct connection mode is used by default");
+                    log.warn("--server-url is deprecated");
                     i++;
                     break;
                 case "--uid":
-                    log.warn("--uid is deprecated, direct connection mode is used by default");
+                    log.warn("--uid is deprecated");
                     i++;
                     break;
                 case "--working-dir":
@@ -167,9 +168,6 @@ public class TuiMain {
         return config;
     }
 
-    /**
-     * 处理会话恢复逻辑
-     */
     private static String handleSessionResume(AgentRunner agentRunner, AppController controller, TuiAppConfig config) {
         if (!config.resumeSession) {
             return null;
@@ -198,51 +196,26 @@ public class TuiMain {
         }
 
         controller.setSessionId(targetSessionId);
-        // 加载历史消息到 UI
         controller.loadSessionHistory(targetSessionId);
         log.info("Resuming session: {}", targetSessionId);
         return targetSessionId;
     }
 
     private static void printHelp() {
-        System.out.println("CodeFaster Agent TUI (powered by TamboUI)");
+        System.out.println("CodeFaster Agent TUI");
         System.out.println();
         System.out.println("Usage: coderfaster [options]");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --working-dir <path>     Working directory (default: current directory)");
-        System.out.println("  --model <name>           Model name (default: qwen3.5-plus)");
-        System.out.println("  --auto-confirm           Auto-confirm dangerous operations");
-        System.out.println("  --debug                  Enable debug mode");
-        System.out.println("  --max-iterations <n>     Maximum iterations (default: 50)");
-        System.out.println("  --resume [id-prefix]     Resume a session (latest if no prefix given)");
-        System.out.println("  --continue, -c           Resume the most recent session");
-        System.out.println("  --cleanup-days <n>       Session retention days (default: 30, -1 for never)");
-        System.out.println("  --help, -h               Show this help message");
-        System.out.println();
-        System.out.println("Keyboard Shortcuts:");
-        System.out.println("  Enter           Send message / Execute command");
-        System.out.println("  Ctrl+C          Cancel current task");
-        System.out.println("  Ctrl+Q / q      Quit application");
-        System.out.println("  Ctrl+U / Ctrl+D Scroll up/down half page");
-        System.out.println("  Ctrl+T / Ctrl+B Scroll to top/bottom");
-        System.out.println("  Tab             Auto-complete slash command");
-        System.out.println("  Esc             Cancel input / Close dialog");
-        System.out.println();
-        System.out.println("Slash Commands:");
-        System.out.println("  /help           Show help");
-        System.out.println("  /clear          Clear chat history");
-        System.out.println("  /quit           Quit application");
-        System.out.println("  /cancel         Cancel current task");
-        System.out.println();
-        System.out.println("Session Commands:");
-        System.out.println("  /sessions       List all sessions");
-        System.out.println("  /resume [id]    Resume a session");
-        System.out.println("  /new            Start a new session");
-        System.out.println("  /delete <id>    Delete a session");
-        System.out.println("  /compact [hint] Compact current session");
-        System.out.println("  /context        Show context statistics");
-        System.out.println("  /export [id]    Export session to Markdown");
+        System.out.println("  --working-dir <path>     Working directory");
+        System.out.println("  --model <name>           Model name");
+        System.out.println("  --auto-confirm           Auto-confirm operations");
+        System.out.println("  --debug                  Debug mode");
+        System.out.println("  --max-iterations <n>     Max iterations");
+        System.out.println("  --resume [id]            Resume session");
+        System.out.println("  --continue, -c           Resume latest session");
+        System.out.println("  --cleanup-days <n>       Session retention days");
+        System.out.println("  --help, -h               Show help");
     }
 
     private static class TuiAppConfig {
