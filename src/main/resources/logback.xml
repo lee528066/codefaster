@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 定义日志文件输出路径 -->
+    <!-- Logback 不支持 ~ 展开，使用 ${user.home} 获取用户主目录 -->
+    <property name="LOG_PATH" value="${user.home}/coderfaster-agent-logs" />
+    <property name="LOG_FILE" value="coderfaster_agent_logs" />
+
+    <!-- 文件输出 Appender -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE}.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <!-- 异步文件输出 Appender (提高性能) -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <discardingThreshold>0</discardingThreshold>
+        <queueSize>512</queueSize>
+        <appender-ref ref="FILE" />
+    </appender>
+
+    <!-- Root Logger 配置 - 只输出到文件，不输出到控制台 -->
+    <root level="INFO">
+        <appender-ref ref="ASYNC_FILE" />
+    </root>
+
+    <!-- 项目包日志级别 -->
+    <logger name="com.coderfaster" level="DEBUG" additivity="false">
+        <appender-ref ref="ASYNC_FILE" />
+    </logger>
+
+    <!-- 第三方库日志级别 -->
+    <logger name="okhttp3" level="WARN" />
+    <logger name="com.fasterxml.jackson" level="WARN" />
+    <logger name="org.eclipse.lsp4j" level="WARN" />
+</configuration>

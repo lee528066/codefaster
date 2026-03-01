@@ -1,0 +1,44 @@
+/* CodeMate Agent TUI - TamboUI CSS Theme */
+
+/* History panel */
+.history-panel {
+    border-color: #45475a;
+}
+
+.history-panel:focused {
+    border-color: #89b4fa;
+}
+
+/* Scroll hint */
+.scroll-hint {
+    color: #808080;
+}
+
+/* Tool card */
+.tool-card {
+    border-color: #fab387;
+}
+
+/* Input panel */
+.input-panel {
+    border-color: #45475a;
+}
+
+.input-panel:focused {
+    border-color: #89b4fa;
+}
+
+/* Status bar */
+#status-bar {
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+/* Dialog */
+.dialog {
+    border-color: #89b4fa;
+}
+
+.confirm-dialog {
+    border-color: #fab387;
+}
