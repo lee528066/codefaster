@@ -449,7 +449,7 @@ public class AgentRunner implements Closeable {
                     .autoConfirm(autoConfirm)
                     .debug(debug)
                     .modelName(modelName)
-                    .apiKey("sk-f5e5430b825343f8af4ebd5c305f38a6")
+                    .apiKey("")
                     .mockSystemPrompt(mockSystemPrompt)
                     .build();
 
