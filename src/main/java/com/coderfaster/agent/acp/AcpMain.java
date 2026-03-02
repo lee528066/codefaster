@@ -73,6 +73,8 @@ public class AcpMain {
         }));
 
         log.info("ACP started successfully");
+
+        Thread.currentThread().join();
     }
 
     private static JsonNode handleMethod(com.coderfaster.agent.acp.agent.CodeFasterAcpAgent agent, String method, JsonNode params) throws Exception {
