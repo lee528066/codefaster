@@ -3,9 +3,11 @@ package com.coderfaster.agent.acp.protocol;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
 @Builder
+@NoArgsConstructor
 public class AcpMessage {
     @Builder.Default
     private String jsonrpc = "2.0";
