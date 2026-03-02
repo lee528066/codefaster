@@ -2,10 +2,14 @@ package com.coderfaster.agent.acp.agent;
 
 import com.coderfaster.agent.AgentRunner;
 import com.coderfaster.agent.acp.AcpException;
+import com.coderfaster.agent.acp.protocol.AcpError;
 import com.coderfaster.agent.acp.protocol.AcpMethods;
+import com.coderfaster.agent.acp.protocol.AcpSchema;
 import com.coderfaster.agent.config.AgentConfig;
-import com.coderfaster.agent.config.local.ConfigInitializer;
-import com.coderfaster.agent.config.local.LocalConfig;
+import com.coderfaster.agent.core.AgentResult;
+import com.coderfaster.agent.session.SessionConfig;
+import com.coderfaster.agent.session.SessionMetadata;
+import com.coderfaster.agent.session.compaction.ContextStats;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -18,44 +22,55 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * CodeFaster ACP Agent - 兼容旧版本
- * 使用 AgentRunner 作为底层执行引擎
+ * ACP Agent - 使用 AgentRunner 作为底层实现
+ * 提供完整的 ReAct 循环支持，包括工具调用执行
  */
-public class CodeFasterAcpAgent {
+public class AcpAgent {
 
-    private static final Logger log = LoggerFactory.getLogger(CodeFasterAcpAgent.class);
+    private static final Logger log = LoggerFactory.getLogger(AcpAgent.class);
 
+    private final AgentConfig config;
+    private final AgentRunner agentRunner;
     private final ObjectMapper objectMapper;
     private final Map<String, AcpSession> sessions;
-    private final AgentRunner agentRunner;
-    private AgentConfig config;
     private boolean initialized;
 
-    public CodeFasterAcpAgent() throws Exception {
+    public AcpAgent(AgentConfig config) {
+        this.config = config;
         this.objectMapper = new ObjectMapper();
         this.sessions = new ConcurrentHashMap<>();
         this.initialized = false;
 
-        // 从本地配置创建 AgentRunner
-        LocalConfig localConfig = ConfigInitializer.initialize(true);
-        log.info("Config loaded: {}", LocalConfig.getConfigPath());
-
-        AgentConfig agentConfig = AgentConfig.builder()
-                .apiKey(localConfig.getApiKey())
-                .modelName(localConfig.getModelName())
-                .baseUrl(localConfig.getEffectiveBaseUrl())
-                .authType(localConfig.getAuthType())
-                .workingDirectory(java.nio.file.Path.of(System.getProperty("user.dir")))
-                .autoConfirm(true)
-                .debug(false)
-                .maxIterations(50)
+        // 创建会话配置
+        SessionConfig sessionConfig = SessionConfig.builder()
+                .cleanupPeriodDays(30)
+                .cleanupOnStartup(false)
                 .build();
 
-        this.agentRunner = AgentRunner.builder(agentConfig).build();
-        this.config = agentConfig;
-        log.info("CodeFasterAcpAgent initialized with AgentRunner");
+        // 创建 AgentRunner，使用 AgentRunner 作为底层实现
+        this.agentRunner = AgentRunner.builder(config)
+                .sessionConfig(sessionConfig)
+                .build();
+
+        log.info("AcpAgent initialized with AgentRunner");
     }
 
+    /**
+     * 使用现有的 AgentRunner 创建 AcpAgent
+     * 用于 TuiMain 嵌入模式
+     */
+    public AcpAgent(AgentRunner agentRunner) {
+        this.agentRunner = agentRunner;
+        this.config = agentRunner.getConfig();
+        this.objectMapper = new ObjectMapper();
+        this.sessions = new ConcurrentHashMap<>();
+        this.initialized = true;
+        log.info("AcpAgent initialized with provided AgentRunner");
+    }
+
+    /**
+     * 处理 initialize 方法
+     */
     public JsonNode initialize(JsonNode params) throws Exception {
         log.info("ACP initialize called");
 
@@ -93,11 +108,17 @@ public class CodeFasterAcpAgent {
         return result;
     }
 
+    /**
+     * 处理 session_new 方法
+     */
     public JsonNode newSession(JsonNode params) throws Exception {
-        if (!initialized) throw AcpException.internalError("Agent not initialized");
+        if (!initialized) {
+            throw AcpException.internalError("Agent not initialized");
+        }
 
         log.info("Creating new ACP session");
 
+        // 创建新的 AcpSession，使用 AgentRunner
         AcpSession session = new AcpSession(agentRunner);
         sessions.put(session.getSessionId(), session);
 
@@ -117,46 +138,84 @@ public class CodeFasterAcpAgent {
         return result;
     }
 
+    /**
+     * 处理 session_load 方法
+     */
     public JsonNode loadSession(JsonNode params) throws Exception {
+        if (!initialized) {
+            throw AcpException.internalError("Agent not initialized");
+        }
+
         String sessionId = params.get("sessionId").asText();
         log.info("Loading session: {}", sessionId);
-        return objectMapper.createObjectNode();
+
+        // 从 AgentRunner 加载会话
+        List<SessionMetadata> sessions = agentRunner.findSessionsByPrefix(sessionId);
+        if (sessions.isEmpty()) {
+            throw AcpException.invalidParams("Session not found: " + sessionId);
+        }
+
+        SessionMetadata metadata = sessions.get(0);
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("sessionId", metadata.getSessionId());
+        result.put("createdAt", metadata.getCreatedAt().toEpochMilli());
+        result.put("messageCount", metadata.getMessageCount());
+
+        // 恢复会话到 AcpSession
+        AcpSession session = new AcpSession(agentRunner, metadata.getSessionId());
+        this.sessions.put(metadata.getSessionId(), session);
+
+        return result;
     }
 
+    /**
+     * 处理 session_list 方法
+     */
     public JsonNode listSessions(JsonNode params) throws Exception {
         log.info("Listing sessions");
 
         ObjectNode result = objectMapper.createObjectNode();
         ArrayNode items = result.putArray("items");
 
-        // 从 AgentRunner 获取持久化会话
-        List<com.coderfaster.agent.session.SessionMetadata> sessionList = agentRunner.listSessions();
-        for (com.coderfaster.agent.session.SessionMetadata metadata : sessionList) {
+        // 列出 AgentRunner 中的会话
+        List<SessionMetadata> sessionList = agentRunner.listSessions();
+        for (SessionMetadata metadata : sessionList) {
             ObjectNode item = items.addObject();
             item.put("sessionId", metadata.getSessionId());
-            item.put("cwd", System.getProperty("user.dir"));
+            item.put("cwd", config.getWorkingDirectory().toString());
             item.put("startTime", metadata.getCreatedAt().toEpochMilli());
             item.put("messageCount", metadata.getMessageCount());
         }
 
-        // 同时列出内存中的会话
+        // 也包含内存中的会话
         sessions.keySet().forEach(id -> {
-            ObjectNode item = items.addObject();
-            item.put("sessionId", id);
-            item.put("cwd", System.getProperty("user.dir"));
-            item.put("startTime", System.currentTimeMillis());
-            item.put("messageCount", 0);
+            if (sessionList.stream().noneMatch(m -> m.getSessionId().equals(id))) {
+                ObjectNode item = items.addObject();
+                item.put("sessionId", id);
+                item.put("cwd", config.getWorkingDirectory().toString());
+                item.put("startTime", System.currentTimeMillis());
+                item.put("messageCount", 0);
+            }
         });
 
         result.put("hasMore", false);
         return result;
     }
 
+    /**
+     * 处理 session_prompt 方法
+     */
     public JsonNode prompt(JsonNode params) throws Exception {
+        if (!initialized) {
+            throw AcpException.internalError("Agent not initialized");
+        }
+
         String sessionId = params.get("sessionId").asText();
         AcpSession session = sessions.get(sessionId);
 
-        if (session == null) throw AcpException.invalidParams("Session not found: " + sessionId);
+        if (session == null) {
+            throw AcpException.invalidParams("Session not found: " + sessionId);
+        }
 
         String prompt = null;
         if (params.has("prompt")) {
@@ -172,22 +231,35 @@ public class CodeFasterAcpAgent {
             throw AcpException.invalidParams("Prompt is required");
         }
 
+        log.info("Processing prompt for session {}: {}", sessionId, prompt);
+
+        // 使用 AcpSession 处理 prompt，底层调用 AgentRunner
         return session.handlePrompt(prompt);
     }
 
+    /**
+     * 处理 session_cancel 方法
+     */
     public JsonNode cancel(JsonNode params) throws Exception {
         String sessionId = params.get("sessionId").asText();
         AcpSession session = sessions.get(sessionId);
-        if (session != null) session.cancel();
+        if (session != null) {
+            session.cancel();
+        }
         return objectMapper.createObjectNode();
     }
 
+    /**
+     * 处理 session_set_model 方法
+     */
     public JsonNode setModel(JsonNode params) throws Exception {
         String sessionId = params.get("sessionId").asText();
         String modelId = params.get("modelId").asText();
 
         AcpSession session = sessions.get(sessionId);
-        if (session == null) throw AcpException.invalidParams("Session not found: " + sessionId);
+        if (session == null) {
+            throw AcpException.invalidParams("Session not found: " + sessionId);
+        }
 
         session.setModel(modelId);
 
@@ -197,18 +269,31 @@ public class CodeFasterAcpAgent {
         return result;
     }
 
+    /**
+     * 处理 authenticate 方法
+     */
     public JsonNode authenticate(JsonNode params) throws Exception {
         String methodId = params.get("methodId").asText();
         log.info("Authenticating with method: {}", methodId);
         return objectMapper.createObjectNode();
     }
 
+    /**
+     * 关闭资源
+     */
     public void close() {
         sessions.values().forEach(AcpSession::close);
         sessions.clear();
         if (agentRunner != null) {
             agentRunner.close();
         }
-        log.info("All sessions closed");
+        log.info("AcpAgent closed");
+    }
+
+    /**
+     * 获取 AgentRunner（用于测试）
+     */
+    public AgentRunner getAgentRunner() {
+        return agentRunner;
     }
 }

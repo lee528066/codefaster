@@ -31,6 +31,25 @@ public class TuiMain {
             return;
         }
 
+        // ACP 模式：启动 ACP 服务器
+        if (config.acpMode) {
+            startAcpMode(config);
+            return;
+        }
+
+        try {
+            startTuiMode(config);
+        } catch (Exception e) {
+            log.error("Failed to start TUI", e);
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
+        }
+    }
+
+    /**
+     * 启动 ACP 模式
+     */
+    private static void startAcpMode(TuiAppConfig config) {
         try {
             // 检查并初始化本地配置
             System.out.println("正在检查配置...");
@@ -39,6 +58,7 @@ public class TuiMain {
             System.out.println("  账号类型：" + localConfig.getAuthType());
             System.out.println("  模型：" + localConfig.getModelName());
             System.out.println();
+            System.out.println("Starting ACP mode...");
 
             // 使用本地配置创建 AgentConfig
             AgentConfig agentConfig = AgentConfig.builder()
@@ -47,7 +67,7 @@ public class TuiMain {
                     .baseUrl(localConfig.getEffectiveBaseUrl())
                     .authType(localConfig.getAuthType())
                     .workingDirectory(config.workingDirectory)
-                    .autoConfirm(config.autoConfirm)
+                    .autoConfirm(true) // ACP 模式默认自动确认
                     .debug(config.debug)
                     .maxIterations(config.maxIterations)
                     .build();
@@ -61,51 +81,87 @@ public class TuiMain {
                     .sessionConfig(sessionConfig)
                     .build();
 
-            AppController controller = new AppController(agentRunner);
-
-            String resumedSessionId = handleSessionResume(agentRunner, controller, config);
-
-            controller.addSystemMessage("Welcome to CodeFaster Agent TUI!");
-            if (resumedSessionId != null) {
-                controller.addSystemMessage("Resumed session: " + resumedSessionId.substring(0, 8));
-            }
-            controller.addSystemMessage("Type your message and press Enter to send, or type / for commands.");
-
-            MainView mainView = new MainView(controller);
-
-            TuiConfig tuiConfig = TuiConfig.builder()
-                    .tickRate(Duration.ofMillis(100))
-                    .mouseCapture(true)
-                    .build();
-
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                log.info("Shutting down TUI...");
-                try {
-                    controller.close();
-                } catch (Exception e) {
-                    log.debug("Error during shutdown (ignored)", e);
-                }
-            }));
-
-            try (ToolkitRunner runner = ToolkitRunner.create(tuiConfig)) {
-                AgentEventBridge bridge = new AgentEventBridge(controller, runner);
-                agentRunner.setEventHandler(bridge::handleEvent);
-                controller.setQuitCallback(() -> {
-                    try {
-                        controller.close();
-                        runner.quit();
-                    } catch (Exception e) {
-                        log.error("Error during quit", e);
-                    }
-                });
-
-                runner.run(mainView::render);
-            }
+            com.coderfaster.agent.acp.AcpMain.startWithAgentRunner(agentRunner);
 
         } catch (Exception e) {
-            log.error("Failed to start TUI", e);
+            log.error("Failed to start ACP mode", e);
             System.err.println("Error: " + e.getMessage());
             System.exit(1);
+        }
+    }
+
+    /**
+     * 启动 TUI 模式
+     */
+    private static void startTuiMode(TuiAppConfig config) throws Exception {
+        // 检查并初始化本地配置
+        System.out.println("正在检查配置...");
+        LocalConfig localConfig = ConfigInitializer.initialize(true);
+        System.out.println("✓ 配置已加载：" + LocalConfig.getConfigPath());
+        System.out.println("  账号类型：" + localConfig.getAuthType());
+        System.out.println("  模型：" + localConfig.getModelName());
+        System.out.println();
+
+        // 使用本地配置创建 AgentConfig
+        AgentConfig agentConfig = AgentConfig.builder()
+                .apiKey(localConfig.getApiKey())
+                .modelName(localConfig.getModelName())
+                .baseUrl(localConfig.getEffectiveBaseUrl())
+                .authType(localConfig.getAuthType())
+                .workingDirectory(config.workingDirectory)
+                .autoConfirm(config.autoConfirm)
+                .debug(config.debug)
+                .maxIterations(config.maxIterations)
+                .build();
+
+        SessionConfig sessionConfig = SessionConfig.builder()
+                .cleanupPeriodDays(config.cleanupDays)
+                .cleanupOnStartup(true)
+                .build();
+
+        AgentRunner agentRunner = AgentRunner.builder(agentConfig)
+                .sessionConfig(sessionConfig)
+                .build();
+
+        AppController controller = new AppController(agentRunner);
+
+        String resumedSessionId = handleSessionResume(agentRunner, controller, config);
+
+        controller.addSystemMessage("Welcome to CodeFaster Agent TUI!");
+        if (resumedSessionId != null) {
+            controller.addSystemMessage("Resumed session: " + resumedSessionId.substring(0, 8));
+        }
+        controller.addSystemMessage("Type your message and press Enter to send, or type / for commands.");
+
+        MainView mainView = new MainView(controller);
+
+        TuiConfig tuiConfig = TuiConfig.builder()
+                .tickRate(Duration.ofMillis(100))
+                .mouseCapture(true)
+                .build();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.info("Shutting down TUI...");
+            try {
+                controller.close();
+            } catch (Exception e) {
+                log.debug("Error during shutdown (ignored)", e);
+            }
+        }));
+
+        try (ToolkitRunner runner = ToolkitRunner.create(tuiConfig)) {
+            AgentEventBridge bridge = new AgentEventBridge(controller, runner);
+            agentRunner.setEventHandler(bridge::handleEvent);
+            controller.setQuitCallback(() -> {
+                try {
+                    controller.close();
+                    runner.quit();
+                } catch (Exception e) {
+                    log.error("Error during quit", e);
+                }
+            });
+
+            runner.run(mainView::render);
         }
     }
 
@@ -115,6 +171,9 @@ public class TuiMain {
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             switch (arg) {
+                case "--acp":
+                    config.acpMode = true;
+                    break;
                 case "--server-url":
                     log.warn("--server-url is deprecated");
                     i++;
@@ -207,6 +266,7 @@ public class TuiMain {
         System.out.println("Usage: coderfaster [options]");
         System.out.println();
         System.out.println("Options:");
+        System.out.println("  --acp                    Start in ACP mode");
         System.out.println("  --working-dir <path>     Working directory");
         System.out.println("  --model <name>           Model name");
         System.out.println("  --auto-confirm           Auto-confirm operations");
@@ -225,6 +285,7 @@ public class TuiMain {
         boolean debug = false;
         int maxIterations = 50;
         boolean showHelp = false;
+        boolean acpMode = false;
         boolean resumeSession = false;
         String resumeSessionId;
         int cleanupDays = 30;
